@@ -45,24 +45,36 @@ export const contractBranchTask = task({
       contractNotesChars: payload.contractNotes.length,
     });
 
-    const result = await callN8nWebhook(url, {
-      clientName: payload.clientName,
-      email: payload.email,
-      contractNotes: payload.contractNotes,
-    });
-
-    if (result.success) {
-      logger.info("Contract branch — PandaDoc envelope created and sent", {
-        client: payload.clientName,
+    let result: Awaited<ReturnType<typeof callN8nWebhook>>;
+    try {
+      result = await callN8nWebhook(url, {
+        clientName: payload.clientName,
+        email: payload.email,
+        contractNotes: payload.contractNotes,
       });
-    } else {
-      logger.error("Contract branch — n8n webhook failed", {
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      logger.error("Contract branch — unexpected error during webhook call", {
+        client: payload.clientName,
+        error: errorMessage,
+      });
+      throw new Error(`Contract branch unexpected error: ${errorMessage}`);
+    }
+
+    if (!result.success) {
+      logger.error("Contract branch — n8n webhook failed after all retries", {
         client: payload.clientName,
         error: result.error,
       });
+      // Throw so Trigger.dev retries this sub-task (maxAttempts: 2)
+      throw new Error(`Contract webhook failed: ${result.error}`);
     }
 
-    return { success: result.success, data: result.data };
+    logger.info("Contract branch — PandaDoc envelope created and sent", {
+      client: payload.clientName,
+    });
+
+    return { success: true, data: result.data };
   },
 });
 
@@ -86,25 +98,37 @@ export const emailBranchTask = task({
       emailBodyChars: payload.welcomeEmailBody.length,
     });
 
-    const result = await callN8nWebhook(url, {
-      clientName: payload.clientName,
-      email: payload.email,
-      welcomeEmailBody: payload.welcomeEmailBody,
-    });
-
-    if (result.success) {
-      logger.info("Email branch — welcome email sent via Gmail", {
-        client: payload.clientName,
-        to: payload.email,
+    let result: Awaited<ReturnType<typeof callN8nWebhook>>;
+    try {
+      result = await callN8nWebhook(url, {
+        clientName: payload.clientName,
+        email: payload.email,
+        welcomeEmailBody: payload.welcomeEmailBody,
       });
-    } else {
-      logger.error("Email branch — n8n webhook failed", {
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      logger.error("Email branch — unexpected error during webhook call", {
+        client: payload.clientName,
+        error: errorMessage,
+      });
+      throw new Error(`Email branch unexpected error: ${errorMessage}`);
+    }
+
+    if (!result.success) {
+      logger.error("Email branch — n8n webhook failed after all retries", {
         client: payload.clientName,
         error: result.error,
       });
+      // Throw so Trigger.dev retries this sub-task (maxAttempts: 2)
+      throw new Error(`Email webhook failed: ${result.error}`);
     }
 
-    return { success: result.success, data: result.data };
+    logger.info("Email branch — welcome email sent via Gmail", {
+      client: payload.clientName,
+      to: payload.email,
+    });
+
+    return { success: true, data: result.data };
   },
 });
 
@@ -133,14 +157,33 @@ export const crmBranchTask = task({
       firstSessionFocus: payload.firstSessionFocus,
     });
 
-    const result = await callN8nWebhook(url, {
-      clientName: payload.clientName,
-      email: payload.email,
-      tags: payload.tags,
-      priority: payload.priority,
-      notes: payload.notes,
-      firstSessionFocus: payload.firstSessionFocus,
-    });
+    let result: Awaited<ReturnType<typeof callN8nWebhook>>;
+    try {
+      result = await callN8nWebhook(url, {
+        clientName: payload.clientName,
+        email: payload.email,
+        tags: payload.tags,
+        priority: payload.priority,
+        notes: payload.notes,
+        firstSessionFocus: payload.firstSessionFocus,
+      });
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      logger.error("CRM branch — unexpected error during webhook call", {
+        client: payload.clientName,
+        error: errorMessage,
+      });
+      throw new Error(`CRM branch unexpected error: ${errorMessage}`);
+    }
+
+    if (!result.success) {
+      logger.error("CRM branch — n8n webhook failed after all retries", {
+        client: payload.clientName,
+        error: result.error,
+      });
+      // Throw so Trigger.dev retries this sub-task (maxAttempts: 2)
+      throw new Error(`CRM webhook failed: ${result.error}`);
+    }
 
     // n8n Notion node returns the new page URL in { url: "..." }
     const crmLink =
@@ -151,19 +194,12 @@ export const crmBranchTask = task({
         ? (result.data as { url: string }).url
         : undefined;
 
-    if (result.success) {
-      logger.info("CRM branch — Notion record created", {
-        client: payload.clientName,
-        crmLink: crmLink ?? "(no URL returned by n8n)",
-      });
-    } else {
-      logger.error("CRM branch — n8n webhook failed", {
-        client: payload.clientName,
-        error: result.error,
-      });
-    }
+    logger.info("CRM branch — Notion record created", {
+      client: payload.clientName,
+      crmLink: crmLink ?? "(no URL returned by n8n)",
+    });
 
-    return { success: result.success, data: result.data, crmLink };
+    return { success: true, data: result.data, crmLink };
   },
 });
 
@@ -237,35 +273,49 @@ export const clientOnboardingTask = schemaTask({
     metadata.set("stage", "parallel-branches");
     logger.info("Step 3 — Launching 3 parallel branches (contract / email / CRM)");
 
-    const { runs: branchRuns } = await batch.triggerByTaskAndWait([
-      {
-        task: contractBranchTask,
-        payload: {
-          clientName: payload.clientName,
-          email: payload.email,
-          contractNotes: aiOutput.contractNotes,
+    let branchRuns: Awaited<ReturnType<typeof batch.triggerByTaskAndWait>>["runs"];
+    try {
+      const batchResult = await batch.triggerByTaskAndWait([
+        {
+          task: contractBranchTask,
+          payload: {
+            clientName: payload.clientName,
+            email: payload.email,
+            contractNotes: aiOutput.contractNotes,
+          },
         },
-      },
-      {
-        task: emailBranchTask,
-        payload: {
-          clientName: payload.clientName,
-          email: payload.email,
-          welcomeEmailBody: aiOutput.welcomeEmailBody,
+        {
+          task: emailBranchTask,
+          payload: {
+            clientName: payload.clientName,
+            email: payload.email,
+            welcomeEmailBody: aiOutput.welcomeEmailBody,
+          },
         },
-      },
-      {
-        task: crmBranchTask,
-        payload: {
-          clientName: payload.clientName,
-          email: payload.email,
-          tags: aiOutput.crmSummary.tags,
-          priority: aiOutput.crmSummary.priority,
-          notes: aiOutput.crmSummary.notes,
-          firstSessionFocus: aiOutput.crmSummary.firstSessionFocus,
+        {
+          task: crmBranchTask,
+          payload: {
+            clientName: payload.clientName,
+            email: payload.email,
+            tags: aiOutput.crmSummary.tags,
+            priority: aiOutput.crmSummary.priority,
+            notes: aiOutput.crmSummary.notes,
+            firstSessionFocus: aiOutput.crmSummary.firstSessionFocus,
+          },
         },
-      },
-    ]);
+      ]);
+      branchRuns = batchResult.runs;
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      logger.error("Step 3 — Failed to trigger parallel branches", {
+        client: payload.clientName,
+        error: errorMessage,
+      });
+      metadata.set("stage", "failed-branches");
+      throw new Error(
+        `Step 3 batch trigger failed for "${payload.clientName}": ${errorMessage}`
+      );
+    }
 
     // Positional destructure matches the input array order above
     const [contractRun, emailRun, crmRun] = branchRuns;

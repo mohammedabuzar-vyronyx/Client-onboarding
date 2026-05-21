@@ -42,17 +42,30 @@ export async function generateOnboardingContent(
     client: payload.clientName,
   });
 
-  const message = await anthropic.messages.create({
-    model: ONBOARDING_MODEL,
-    max_tokens: ONBOARDING_MAX_TOKENS,
-    system: buildSystemPrompt(),
-    messages: [
-      {
-        role: "user",
-        content: buildUserPrompt(payload),
-      },
-    ],
-  });
+  let message: Awaited<ReturnType<typeof anthropic.messages.create>>;
+  try {
+    message = await anthropic.messages.create({
+      model: ONBOARDING_MODEL,
+      max_tokens: ONBOARDING_MAX_TOKENS,
+      system: buildSystemPrompt(),
+      messages: [
+        {
+          role: "user",
+          content: buildUserPrompt(payload),
+        },
+      ],
+    });
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    logger.error("Claude API call threw an exception", {
+      model: ONBOARDING_MODEL,
+      client: payload.clientName,
+      error: errorMessage,
+    });
+    throw new Error(
+      `Claude API request failed for "${payload.clientName}": ${errorMessage}`
+    );
+  }
 
   logger.info("Claude API responded", {
     stopReason: message.stop_reason,
