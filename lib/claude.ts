@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { logger } from "@trigger.dev/sdk";
 import {
   buildSystemPrompt,
   buildUserPrompt,
@@ -35,6 +36,12 @@ const anthropic = new Anthropic();
 export async function generateOnboardingContent(
   payload: OnboardingPayload
 ): Promise<OnboardingAIOutput> {
+  logger.info("Calling Claude API", {
+    model: ONBOARDING_MODEL,
+    maxTokens: ONBOARDING_MAX_TOKENS,
+    client: payload.clientName,
+  });
+
   const message = await anthropic.messages.create({
     model: ONBOARDING_MODEL,
     max_tokens: ONBOARDING_MAX_TOKENS,
@@ -45,6 +52,12 @@ export async function generateOnboardingContent(
         content: buildUserPrompt(payload),
       },
     ],
+  });
+
+  logger.info("Claude API responded", {
+    stopReason: message.stop_reason,
+    inputTokens: message.usage.input_tokens,
+    outputTokens: message.usage.output_tokens,
   });
 
   const firstBlock = message.content[0];
@@ -60,16 +73,30 @@ export async function generateOnboardingContent(
   try {
     parsed = JSON.parse(rawText);
   } catch {
+    logger.error("Claude returned non-JSON — raw response logged", {
+      preview: rawText.slice(0, 300),
+    });
     throw new Error(
       `Claude returned non-JSON content. Raw response: ${rawText.slice(0, 200)}`
     );
   }
 
   if (!isOnboardingAIOutput(parsed)) {
+    logger.error("Claude JSON shape mismatch", {
+      received: JSON.stringify(parsed).slice(0, 300),
+    });
     throw new Error(
       `Claude JSON response did not match expected shape. Got: ${JSON.stringify(parsed).slice(0, 300)}`
     );
   }
+
+  logger.info("Claude content parsed successfully", {
+    contractNotesChars: parsed.contractNotes.length,
+    welcomeEmailChars: parsed.welcomeEmailBody.length,
+    crmPriority: parsed.crmSummary.priority,
+    crmTags: parsed.crmSummary.tags,
+    firstSessionFocus: parsed.crmSummary.firstSessionFocus,
+  });
 
   return parsed;
 }

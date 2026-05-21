@@ -39,7 +39,11 @@ export const contractBranchTask = task({
     const url = process.env.N8N_WEBHOOK_CONTRACT;
     if (!url) throw new Error("N8N_WEBHOOK_CONTRACT env var is not set");
 
-    logger.info("Sending contract webhook", { clientName: payload.clientName });
+    logger.info("Contract branch — sending to n8n (PandaDoc)", {
+      client: payload.clientName,
+      email: payload.email,
+      contractNotesChars: payload.contractNotes.length,
+    });
 
     const result = await callN8nWebhook(url, {
       clientName: payload.clientName,
@@ -47,8 +51,15 @@ export const contractBranchTask = task({
       contractNotes: payload.contractNotes,
     });
 
-    if (!result.success) {
-      logger.error("Contract webhook failed", { error: result.error });
+    if (result.success) {
+      logger.info("Contract branch — PandaDoc envelope created and sent", {
+        client: payload.clientName,
+      });
+    } else {
+      logger.error("Contract branch — n8n webhook failed", {
+        client: payload.clientName,
+        error: result.error,
+      });
     }
 
     return { success: result.success, data: result.data };
@@ -69,8 +80,10 @@ export const emailBranchTask = task({
     const url = process.env.N8N_WEBHOOK_EMAIL;
     if (!url) throw new Error("N8N_WEBHOOK_EMAIL env var is not set");
 
-    logger.info("Sending welcome email webhook", {
-      clientName: payload.clientName,
+    logger.info("Email branch — sending to n8n (Gmail)", {
+      client: payload.clientName,
+      to: payload.email,
+      emailBodyChars: payload.welcomeEmailBody.length,
     });
 
     const result = await callN8nWebhook(url, {
@@ -79,8 +92,16 @@ export const emailBranchTask = task({
       welcomeEmailBody: payload.welcomeEmailBody,
     });
 
-    if (!result.success) {
-      logger.error("Welcome email webhook failed", { error: result.error });
+    if (result.success) {
+      logger.info("Email branch — welcome email sent via Gmail", {
+        client: payload.clientName,
+        to: payload.email,
+      });
+    } else {
+      logger.error("Email branch — n8n webhook failed", {
+        client: payload.clientName,
+        error: result.error,
+      });
     }
 
     return { success: result.success, data: result.data };
@@ -105,7 +126,12 @@ export const crmBranchTask = task({
     const url = process.env.N8N_WEBHOOK_CRM;
     if (!url) throw new Error("N8N_WEBHOOK_CRM env var is not set");
 
-    logger.info("Sending CRM webhook", { clientName: payload.clientName });
+    logger.info("CRM branch — sending to n8n (Notion)", {
+      client: payload.clientName,
+      priority: payload.priority,
+      tags: payload.tags,
+      firstSessionFocus: payload.firstSessionFocus,
+    });
 
     const result = await callN8nWebhook(url, {
       clientName: payload.clientName,
@@ -116,11 +142,7 @@ export const crmBranchTask = task({
       firstSessionFocus: payload.firstSessionFocus,
     });
 
-    if (!result.success) {
-      logger.error("CRM webhook failed", { error: result.error });
-    }
-
-    // n8n Notion node typically returns the new page URL in { url: "..." }
+    // n8n Notion node returns the new page URL in { url: "..." }
     const crmLink =
       result.data !== null &&
       typeof result.data === "object" &&
@@ -128,6 +150,18 @@ export const crmBranchTask = task({
       typeof (result.data as { url: unknown }).url === "string"
         ? (result.data as { url: string }).url
         : undefined;
+
+    if (result.success) {
+      logger.info("CRM branch — Notion record created", {
+        client: payload.clientName,
+        crmLink: crmLink ?? "(no URL returned by n8n)",
+      });
+    } else {
+      logger.error("CRM branch — n8n webhook failed", {
+        client: payload.clientName,
+        error: result.error,
+      });
+    }
 
     return { success: result.success, data: result.data, crmLink };
   },
@@ -157,16 +191,21 @@ export const clientOnboardingTask = schemaTask({
     // --- Step 1: Attach run metadata ---
     metadata.set("clientName", payload.clientName);
     metadata.set("email", payload.email);
+    metadata.set("timezone", payload.timezone);
+    metadata.set("referralSource", payload.referralSource);
     metadata.set("stage", "started");
 
-    logger.info("Client onboarding started", {
+    logger.info("━━━ Client onboarding started ━━━", {
       clientName: payload.clientName,
       email: payload.email,
+      sessionPreference: payload.sessionPreference,
+      timezone: payload.timezone,
+      referralSource: payload.referralSource,
     });
 
     // --- Step 2: AI personalization ---
     metadata.set("stage", "ai-personalization");
-    logger.info("Generating AI personalization content");
+    logger.info("Step 2 — Calling Claude for AI personalization");
 
     let aiOutput: OnboardingAIOutput;
     try {
@@ -174,24 +213,29 @@ export const clientOnboardingTask = schemaTask({
     } catch (err) {
       const errorMessage =
         err instanceof Error ? err.message : "Unknown Claude API error";
-      logger.error("Claude personalization failed — aborting", {
+      logger.error("Step 2 — Claude personalization failed, aborting run", {
         error: errorMessage,
       });
       metadata.set("stage", "failed-ai");
       throw err;
     }
 
-    logger.info("AI content generated", {
-      contractNotesLength: aiOutput.contractNotes.length,
-      emailBodyLength: aiOutput.welcomeEmailBody.length,
+    metadata.set("crmPriority", aiOutput.crmSummary.priority);
+    metadata.set("crmTags", aiOutput.crmSummary.tags.join(", "));
+
+    logger.info("Step 2 — AI personalization complete", {
+      contractNotesChars: aiOutput.contractNotes.length,
+      welcomeEmailChars: aiOutput.welcomeEmailBody.length,
       crmPriority: aiOutput.crmSummary.priority,
+      crmTags: aiOutput.crmSummary.tags,
+      firstSessionFocus: aiOutput.crmSummary.firstSessionFocus,
     });
 
     // --- Step 3: Parallel branches ---
     // Promise.all with triggerAndWait is NOT supported by Trigger.dev.
     // batch.triggerByTaskAndWait fans out to multiple different tasks in parallel.
     metadata.set("stage", "parallel-branches");
-    logger.info("Starting parallel branches: contract, email, CRM");
+    logger.info("Step 3 — Launching 3 parallel branches (contract / email / CRM)");
 
     const { runs: branchRuns } = await batch.triggerByTaskAndWait([
       {
@@ -226,22 +270,46 @@ export const clientOnboardingTask = schemaTask({
     // Positional destructure matches the input array order above
     const [contractRun, emailRun, crmRun] = branchRuns;
 
+    // Log a single consolidated summary for all 3 branches
+    logger.info("Step 3 — Branch results", {
+      contract: contractRun.ok ? "✓ ok" : `✗ failed — ${contractRun.error}`,
+      email: emailRun.ok ? "✓ ok" : `✗ failed — ${emailRun.error}`,
+      crm: crmRun.ok ? "✓ ok" : `✗ failed — ${crmRun.error}`,
+    });
+
     if (!contractRun.ok) {
-      logger.error("Contract branch failed", { error: contractRun.error });
+      logger.error("Step 3 — Contract branch failed (non-blocking)", {
+        error: contractRun.error,
+      });
     }
     if (!emailRun.ok) {
-      logger.error("Email branch failed", { error: emailRun.error });
+      logger.error("Step 3 — Email branch failed (non-blocking)", {
+        error: emailRun.error,
+      });
     }
     if (!crmRun.ok) {
-      logger.error("CRM branch failed", { error: crmRun.error });
+      logger.error("Step 3 — CRM branch failed (non-blocking)", {
+        error: crmRun.error,
+      });
     }
 
     const crmLink =
       crmRun.ok && crmRun.output.crmLink ? crmRun.output.crmLink : null;
 
+    if (crmLink) {
+      metadata.set("crmLink", crmLink);
+      logger.info("Step 3 — CRM link captured", { crmLink });
+    } else {
+      logger.warn("Step 3 — No CRM link returned from Notion (will send N/A to coach)");
+    }
+
     // --- Step 4: Schedule first session ---
     metadata.set("stage", "scheduling");
-    logger.info("Scheduling first session via Calendly");
+    logger.info("Step 4 — Scheduling first session via Calendly", {
+      client: payload.clientName,
+      timezone: payload.timezone,
+      sessionPreference: payload.sessionPreference,
+    });
 
     const calendlyUrl = process.env.N8N_WEBHOOK_CALENDLY;
     if (!calendlyUrl) throw new Error("N8N_WEBHOOK_CALENDLY env var is not set");
@@ -263,15 +331,27 @@ export const clientOnboardingTask = schemaTask({
         ? (calendlyResult.data as { bookingUrl: string }).bookingUrl
         : null;
 
-    if (!calendlyResult.success) {
-      logger.error("Calendly scheduling webhook failed", {
+    if (calendlyResult.success && calendlyLink) {
+      metadata.set("calendlyLink", calendlyLink);
+      logger.info("Step 4 — Calendly booking link created and emailed to client", {
+        client: payload.clientName,
+        calendlyLink,
+      });
+    } else if (calendlyResult.success && !calendlyLink) {
+      logger.warn("Step 4 — Calendly webhook succeeded but returned no bookingUrl");
+    } else {
+      logger.error("Step 4 — Calendly scheduling webhook failed (non-blocking)", {
         error: calendlyResult.error,
       });
     }
 
     // --- Step 5: Notify coach ---
     metadata.set("stage", "coach-notification");
-    logger.info("Notifying coach");
+    logger.info("Step 5 — Notifying coach via Gmail", {
+      client: payload.clientName,
+      crmLink: crmLink ?? "N/A",
+      calendlyLink: calendlyLink ?? "N/A",
+    });
 
     const gmailUrl = process.env.N8N_WEBHOOK_GMAIL;
     if (!gmailUrl) throw new Error("N8N_WEBHOOK_GMAIL env var is not set");
@@ -284,22 +364,35 @@ export const clientOnboardingTask = schemaTask({
       crmSummary: aiOutput.crmSummary,
     });
 
-    if (!coachResult.success) {
-      logger.error("Coach notification webhook failed", {
+    if (coachResult.success) {
+      logger.info("Step 5 — Coach notification email sent", {
+        client: payload.clientName,
+      });
+    } else {
+      logger.error("Step 5 — Coach notification webhook failed (non-blocking)", {
         error: coachResult.error,
       });
     }
 
+    // --- Done ---
     metadata.set("stage", "completed");
 
-    logger.info("Client onboarding completed", {
+    const allBranchesOk = contractRun.ok && emailRun.ok && crmRun.ok;
+    logger.info("━━━ Client onboarding completed ━━━", {
       clientName: payload.clientName,
       email: payload.email,
-      contractOk: contractRun.ok,
-      emailOk: emailRun.ok,
-      crmOk: crmRun.ok,
-      calendlyOk: calendlyResult.success,
-      coachNotifyOk: coachResult.success,
+      allBranchesOk,
+      steps: {
+        contract: contractRun.ok,
+        welcomeEmail: emailRun.ok,
+        crmEntry: crmRun.ok,
+        calendlyScheduled: calendlyResult.success,
+        coachNotified: coachResult.success,
+      },
+      links: {
+        crmLink: crmLink ?? "N/A",
+        calendlyLink: calendlyLink ?? "N/A",
+      },
     });
 
     return {

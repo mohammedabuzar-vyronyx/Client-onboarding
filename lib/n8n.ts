@@ -26,8 +26,16 @@ export async function callN8nWebhook(
 
   let lastError: string | null = null;
 
+  const payloadKeys = Object.keys(body);
+
+  logger.info("n8n webhook — starting", {
+    url,
+    payloadKeys,
+    maxAttempts: MAX_ATTEMPTS,
+  });
+
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    logger.info(`n8n webhook attempt ${attempt}/${MAX_ATTEMPTS}`, {
+    logger.info(`n8n webhook — attempt ${attempt}/${MAX_ATTEMPTS}`, {
       url,
       attempt,
     });
@@ -49,9 +57,17 @@ export async function callN8nWebhook(
           data = await response.text();
         }
 
-        logger.info(`n8n webhook succeeded on attempt ${attempt}`, {
+        const responseKeys =
+          data !== null && typeof data === "object"
+            ? Object.keys(data as object)
+            : typeof data === "string"
+            ? [`(text, ${(data as string).length} chars)`]
+            : ["(empty)"];
+
+        logger.info(`n8n webhook — succeeded on attempt ${attempt}`, {
           url,
           status: response.status,
+          responseKeys,
         });
 
         return { success: true, data, error: null };
@@ -59,7 +75,7 @@ export async function callN8nWebhook(
 
       const errorText = await response.text();
       lastError = `HTTP ${response.status}: ${errorText.slice(0, 200)}`;
-      logger.warn(`n8n webhook non-2xx on attempt ${attempt}`, {
+      logger.warn(`n8n webhook — non-2xx on attempt ${attempt}`, {
         url,
         status: response.status,
         error: lastError,
@@ -67,7 +83,7 @@ export async function callN8nWebhook(
     } catch (err) {
       lastError =
         err instanceof Error ? err.message : "Unknown network error";
-      logger.warn(`n8n webhook threw on attempt ${attempt}`, {
+      logger.warn(`n8n webhook — network error on attempt ${attempt}`, {
         url,
         error: lastError,
       });
@@ -75,13 +91,14 @@ export async function callN8nWebhook(
 
     if (attempt < MAX_ATTEMPTS) {
       const delayMs = BASE_DELAY_MS * Math.pow(2, attempt - 1);
+      logger.info(`n8n webhook — retrying in ${delayMs}ms`, { url, delayMs });
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
 
-  logger.error(`n8n webhook failed after ${MAX_ATTEMPTS} attempts`, {
+  logger.error(`n8n webhook — all ${MAX_ATTEMPTS} attempts failed`, {
     url,
-    error: lastError,
+    lastError,
   });
 
   return { success: false, data: null, error: lastError };
