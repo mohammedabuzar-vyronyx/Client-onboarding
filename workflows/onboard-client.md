@@ -6,8 +6,20 @@ to coach notification — including contract creation, welcome email, CRM entry,
 session scheduling — with zero manual steps.
 
 ## Trigger
-An HTTP POST to `POST /webhook/client-intake` on the webhook receiver server (`server.ts`).
-Any form tool that can send a webhook (Typeform, Tally, Google Forms via Make, etc.) works.
+A **Tally form submission**. When the client submits the intake form, Tally fires a webhook
+to `POST /webhook/tally` on the server (`server.ts`), which maps Tally's field format to our
+schema and enqueues the Trigger.dev run.
+
+**Tally setup:**
+1. Open your Tally form → Integrate → Webhooks
+2. Add webhook URL: `https://<your-server>/webhook/tally`
+3. Ensure your form has fields whose **labels** contain these keywords (case-insensitive):
+   - `name` → mapped to `clientName`
+   - `email` → mapped to `email`
+   - `goal` → mapped to `goals`
+   - `session` → mapped to `sessionPreference` (e.g. "Session Frequency")
+   - `timezone` → mapped to `timezone`
+   - `referral` → mapped to `referralSource` (e.g. "How did you hear about us?")
 
 ## Payload Shape
 ```json
@@ -20,6 +32,48 @@ Any form tool that can send a webhook (Typeform, Tally, Google Forms via Make, e
   "referralSource": "string (required)"
 }
 ```
+
+## n8n Workflows
+
+There are **6 n8n workflows** in total — one intake workflow that fires the Trigger.dev task,
+and five outbound workflows called by the Trigger.dev task.
+
+### Workflow 0 — Tally Form Intake *(triggers the whole pipeline)*
+
+This workflow is **optional** — it gives you a pure-n8n path if you want to avoid hosting
+`server.ts` publicly. If you are hosting the server, point Tally directly at `/webhook/tally`
+and skip this workflow.
+
+| Node | Type | Configuration |
+|------|------|---------------|
+| Tally Intake | Webhook (POST) | Path: `tally-intake` |
+| Map Fields | Code | See code below |
+| Trigger Task | HTTP Request | POST `https://api.trigger.dev/api/v1/tasks/client-onboarding/trigger`, Auth: Bearer `{{ $env.TRIGGER_SECRET_KEY }}`, Body: `{ "payload": {{ $json }} }` |
+| Respond | Respond to Webhook | `{ "status": "queued" }` |
+
+**Map Fields code node:**
+```javascript
+const fields = $json.data.fields;
+const get = (...labels) => {
+  for (const label of labels) {
+    const f = fields.find(f => f.label.toLowerCase().includes(label.toLowerCase()));
+    if (f && f.value) return Array.isArray(f.value) ? f.value.join(', ') : String(f.value);
+  }
+  return '';
+};
+return [{
+  json: {
+    clientName:        get('full name', 'name', 'client name'),
+    email:             get('email'),
+    goals:             get('goal'),
+    sessionPreference: get('session preference', 'session frequency', 'session'),
+    timezone:          get('timezone', 'time zone'),
+    referralSource:    get('how did you hear', 'referral', 'hear about', 'source'),
+  }
+}];
+```
+
+---
 
 ## Steps
 

@@ -30,7 +30,7 @@ type ClientIntakePayload = z.infer<typeof ClientIntakeSchema>;
  */
 export const contractBranchTask = task({
   id: "onboarding-contract-branch",
-  retry: { maxAttempts: 2 },
+  retry: { maxAttempts: 3, minTimeoutInMs: 30000, maxTimeoutInMs: 300000, factor: 2, randomize: true },
   run: async (payload: {
     clientName: string;
     email: string;
@@ -83,7 +83,7 @@ export const contractBranchTask = task({
  */
 export const emailBranchTask = task({
   id: "onboarding-email-branch",
-  retry: { maxAttempts: 2 },
+  retry: { maxAttempts: 3, minTimeoutInMs: 30000, maxTimeoutInMs: 300000, factor: 2, randomize: true },
   run: async (payload: {
     clientName: string;
     email: string;
@@ -138,7 +138,7 @@ export const emailBranchTask = task({
  */
 export const crmBranchTask = task({
   id: "onboarding-crm-branch",
-  retry: { maxAttempts: 2 },
+  retry: { maxAttempts: 3, minTimeoutInMs: 30000, maxTimeoutInMs: 300000, factor: 2, randomize: true },
   run: async (payload: {
     clientName: string;
     email: string;
