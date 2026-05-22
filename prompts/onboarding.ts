@@ -61,7 +61,7 @@ Generate the onboarding content now. Remember: respond only with the JSON object
  * Claude model used for onboarding personalization.
  * Update this constant to switch models without touching any other file.
  */
-export const ONBOARDING_MODEL = "claude-sonnet-4-20250514" as const;
+export const ONBOARDING_MODEL = "claude-sonnet-4-5" as const;
 
 /**
  * Token ceiling for the onboarding response.
