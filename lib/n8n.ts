@@ -50,11 +50,18 @@ export async function callN8nWebhook(
 
       if (response.ok) {
         let data: unknown = null;
-        const contentType = response.headers.get("content-type") ?? "";
-        if (contentType.includes("application/json")) {
-          data = await response.json();
-        } else {
-          data = await response.text();
+        const responseText = await response.text();
+        if (responseText.trim().length > 0) {
+          const contentType = response.headers.get("content-type") ?? "";
+          if (contentType.includes("application/json")) {
+            try {
+              data = JSON.parse(responseText);
+            } catch {
+              data = responseText;
+            }
+          } else {
+            data = responseText;
+          }
         }
 
         const responseKeys =
