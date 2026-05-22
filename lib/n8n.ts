@@ -81,11 +81,18 @@ export async function callN8nWebhook(
         error: lastError,
       });
     } catch (err) {
-      lastError =
-        err instanceof Error ? err.message : "Unknown network error";
+      const errName = err instanceof Error ? err.name : "UnknownError";
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const errCause =
+        err instanceof Error && err.cause instanceof Error
+          ? err.cause.message
+          : undefined;
+      lastError = `${errName}: ${errMsg}`;
       logger.warn(`n8n webhook — network error on attempt ${attempt}`, {
         url,
-        error: lastError,
+        errorType: errName,
+        error: errMsg,
+        cause: errCause,
       });
     }
 
