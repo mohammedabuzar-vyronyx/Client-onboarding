@@ -82,15 +82,21 @@ export async function generateOnboardingContent(
 
   const rawText = firstBlock.text.trim();
 
+  // Strip markdown code fences if Claude wrapped the JSON despite instructions
+  const cleaned = rawText
+    .replace(/^```(?:json)?\s*\n?/i, "")
+    .replace(/\n?```\s*$/i, "")
+    .trim();
+
   let parsed: unknown;
   try {
-    parsed = JSON.parse(rawText);
+    parsed = JSON.parse(cleaned);
   } catch {
     logger.error("Claude returned non-JSON — raw response logged", {
-      preview: rawText.slice(0, 300),
+      preview: cleaned.slice(0, 300),
     });
     throw new Error(
-      `Claude returned non-JSON content. Raw response: ${rawText.slice(0, 200)}`
+      `Claude returned non-JSON content. Raw response: ${cleaned.slice(0, 200)}`
     );
   }
 
